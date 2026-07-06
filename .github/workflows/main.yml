@@ -1,38 +1,59 @@
-name: VanceAI Signup Flow
+name: Playwright VanceAI Login
 
 on:
-  workflow_dispatch: {}
-  
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions UI with custom options
+    inputs:
+      output_format:
+        description: 'Upscaled Image Output Format'
+        required: true
+        default: 'jpg'
+        type: choice
+        options:
+          - 'jpg'
+          - 'png'
+      zip_url:
+        description: 'URL of the ZIP file containing wallpapers (optional if input.zip is committed to the repo)'
+        required: false
+        type: string
+        default: ''
+
 jobs:
-  run-signup:
+  run-browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
 
-      - name: Install dependencies
-        run: npm install
+    - name: Install npm dependencies
+      run: npm install
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+    - name: Install Playwright Browsers and System Dependencies
+      run: npx playwright install --with-deps chromium
 
-      - name: Install xvfb (for headed browser mode)
-        run: sudo apt-get update && sudo apt-get install -y xvfb
+    - name: Run Playwright Script with Xvfb (non-headless)
+      # xvfb-run executes the Node script inside a virtual display environment.
+      # This satisfies the browser's requirement for a display device when headless: false is set.
+      env:
+        OUTPUT_FORMAT: ${{ github.event.inputs.output_format || 'jpg' }}
+        ZIP_URL: ${{ github.event.inputs.zip_url }}
+      run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" node login.js
 
-      - name: Run signup script
-        run: xvfb-run --auto-servernum npx node scripts/login-click.js
-
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: screenshots/
-          retention-days: 7
+    - name: Upload screenshots and upscaled images as workflow artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-artifacts
+        path: |
+          output.zip
+          *.png
