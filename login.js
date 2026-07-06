@@ -142,15 +142,15 @@ async function run() {
   if (!fs.existsSync(zipPath)) {
     console.log('No input.zip found and ZIP_URL is not set.');
     const mockImage = path.join(__dirname, '1-homepage.png');
-    if (fs.existsSync(mockImage)) {
-      console.log('Creating a mock input.zip with 1-homepage.png for end-to-end testing...');
-      const zip = new AdmZip();
-      zip.addLocalFile(mockImage);
-      zip.writeZip(zipPath);
-    } else {
-      console.log('No local mock image found to zip. Script will exit.');
-      process.exit(0);
+    if (!fs.existsSync(mockImage)) {
+      console.log('Creating a mock 1x1 transparent PNG image...');
+      const dummyPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+      fs.writeFileSync(mockImage, Buffer.from(dummyPngBase64, 'base64'));
     }
+    console.log('Creating a mock input.zip with mock image for end-to-end testing...');
+    const zip = new AdmZip();
+    zip.addLocalFile(mockImage);
+    zip.writeZip(zipPath);
   }
 
   // Extract Zip
