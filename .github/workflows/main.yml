@@ -1,10 +1,10 @@
-name: VanceAI Signup Flow
+name: VanceAI Login Click
 
 on:
   workflow_dispatch:
 
 jobs:
-  signup-flow:
+  click-login:
     runs-on: ubuntu-latest
 
     steps:
@@ -14,142 +14,72 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb fluxbox
-          mkdir -p /tmp/pw && cd /tmp/pw
-          npm init -y
-          npm install playwright
-          npx playwright install chromium
-          npx playwright install-deps chromium
+          sudo apt-get install -y \
+            xvfb \
+            x11vnc \
+            fluxbox \
+            chromium-browser \
+            python3-pip
+          pip3 install playwright --break-system-packages
+          python3 -m playwright install chromium
+          python3 -m playwright install-deps chromium
 
-      - name: Start virtual display (non-headless)
-        run: |
-          Xvfb :99 -screen 0 1920x1080x24 &
-          echo "DISPLAY=:99" >> $GITHUB_ENV
-          sleep 2
-          fluxbox &
-          sleep 1
-
-      - name: Run Playwright script
+      - name: Run automation with virtual display
         env:
           DISPLAY: :99
         run: |
-          cd /tmp/pw
-          node - <<'EOF'
-          const { chromium } = require('playwright');
+          Xvfb :99 -screen 0 1280x900x24 &
+          sleep 2
 
-          const BASE = 'https://api.edu-mails.com/api';
+          python3 << 'EOF'
+          import asyncio
+          from playwright.async_api import async_playwright
 
-          async function apiGet(url) {
-            const r = await fetch(url);
-            return r.json();
-          }
-          async function apiPost(url, body) {
-            const r = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-            });
-            return r.json();
-          }
+          async def main():
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch(
+                      headless=False,
+                      args=["--display=:99", "--no-sandbox", "--disable-dev-shm-usage"]
+                  )
+                  page = await browser.new_page(viewport={"width": 1280, "height": 900})
 
-          function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+                  print("Navigating to vanceai.com...")
+                  await page.goto("https://vanceai.com/", wait_until="networkidle")
+                  await page.wait_for_timeout(2000)
 
-          (async () => {
-            // ── 1. Get a domain ──────────────────────────────────────────
-            console.log('Fetching domains...');
-            const domainsRes = await apiGet(`${BASE}/domains`);
-            const domain = domainsRes.data.domains[0];
-            console.log(`Using domain: ${domain.name} (id=${domain.id})`);
+                  # Take screenshot before clicking
+                  await page.screenshot(path="before_click.png")
 
-            // ── 2. Generate random email ──────────────────────────────────
-            console.log('Generating email...');
-            const genRes = await apiPost(`${BASE}/emails/generate`, { action: 'random' });
-            const { uuid, address } = genRes.data.email;
-            console.log(`Email: ${address}  UUID: ${uuid}`);
+                  # Check viewport width to decide which button to click
+                  viewport_width = await page.evaluate("window.innerWidth")
+                  print(f"Viewport width: {viewport_width}")
 
-            // ── 3. Launch browser ─────────────────────────────────────────
-            const browser = await chromium.launch({
-              headless: false,
-              args: ['--no-sandbox', '--disable-setuid-sandbox', '--display=:99']
-            });
-            const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-            const page = await context.newPage();
+                  if viewport_width >= 768:
+                      # Desktop: click the "Log in" button in the nav
+                      print("Desktop layout — clicking Log in button...")
+                      login_btn = page.locator('button.text-sm.font-medium.text-zinc-300', has_text="Log in").first
+                      await login_btn.wait_for(state="visible", timeout=10000)
+                      await login_btn.click()
+                  else:
+                      # Mobile: click hamburger menu first, then Log in
+                      print("Mobile layout — clicking hamburger menu...")
+                      hamburger = page.locator('button[aria-label="Toggle menu"]')
+                      await hamburger.wait_for(state="visible", timeout=10000)
+                      await hamburger.click()
+                      await page.wait_for_timeout(800)
 
-            // ── 4. Navigate to VanceAI ────────────────────────────────────
-            console.log('Navigating to VanceAI...');
-            await page.goto('https://vanceai.com/', { waitUntil: 'networkidle' });
-            await page.screenshot({ path: '/tmp/pw/0-loaded.png' });
+                      print("Clicking Log in button in mobile menu...")
+                      login_btn = page.locator('button.w-full.rounded-xl', has_text="Log in")
+                      await login_btn.wait_for(state="visible", timeout=10000)
+                      await login_btn.click()
 
-            // ── 5. Click "Log in" nav button (opens dropdown) ─────────────
-            console.log('Clicking Log in nav button...');
-            await page.locator('button:has-text("Log in")').first().click();
-            await sleep(1000);
-            await page.screenshot({ path: '/tmp/pw/1-dropdown.png' });
+                  await page.wait_for_timeout(2000)
+                  await page.screenshot(path="after_click.png")
+                  print("Done. Screenshots saved.")
 
-            // ── 6. Click "Sign in" button inside the dropdown ─────────────
-            // The dropdown contains a "Sign in" button that opens the modal
-            console.log('Clicking Sign in inside dropdown...');
-            await page.locator('button:has-text("Sign in")').first().click();
-            await sleep(1000);
-            await page.screenshot({ path: '/tmp/pw/2-after-signin-click.png' });
+                  await browser.close()
 
-            // ── 7. Wait for modal ─────────────────────────────────────────
-            console.log('Waiting for modal...');
-            const modal = page.locator('[role="dialog"][data-state="open"]');
-            await modal.waitFor({ state: 'visible', timeout: 10000 });
-            await page.screenshot({ path: '/tmp/pw/3-modal-signin.png' });
-
-            // ── 8. Click "Sign up" inside modal ───────────────────────────
-            console.log('Clicking Sign up...');
-            await modal.locator('button:has-text("Sign up")').click();
-            await modal.locator('h2:has-text("Sign up")').waitFor({ state: 'visible', timeout: 5000 });
-            await page.screenshot({ path: '/tmp/pw/4-modal-signup.png' });
-
-            // ── 9. Fill email & submit ────────────────────────────────────
-            console.log(`Filling email: ${address}`);
-            await modal.locator('input#signup-email').fill(address);
-            await page.screenshot({ path: '/tmp/pw/5-email-filled.png' });
-
-            console.log('Submitting signup form...');
-            await modal.locator('button[type="submit"]:has-text("Send sign up link")').click();
-            await page.screenshot({ path: '/tmp/pw/6-after-submit.png' });
-
-            // ── 10. Poll inbox for verification email ─────────────────────
-            console.log('Polling inbox for verification email...');
-            let verifyUrl = null;
-            for (let i = 0; i < 24; i++) {
-              await sleep(5000);
-              console.log(`  Poll attempt ${i + 1}...`);
-              const inbox = await apiGet(`${BASE}/emails/${uuid}`);
-              const messages = inbox.data.messages || [];
-              for (const msg of messages) {
-                const body = msg.text_body || msg.html_body || '';
-                const match = body.match(/https?:\/\/[^\s"<>]+vanceai[^\s"<>]*/);
-                if (match) {
-                  verifyUrl = match[0].replace(/&amp;/g, '&');
-                  console.log(`Found verification URL: ${verifyUrl}`);
-                  break;
-                }
-              }
-              if (verifyUrl) break;
-            }
-
-            if (!verifyUrl) {
-              console.error('No verification email received within timeout.');
-              await page.screenshot({ path: '/tmp/pw/7-timeout.png' });
-              await browser.close();
-              process.exit(1);
-            }
-
-            // ── 11. Open verification link in same tab ────────────────────
-            console.log('Opening verification link in same tab...');
-            await page.goto(verifyUrl, { waitUntil: 'networkidle', timeout: 30000 });
-            await sleep(2000);
-            await page.screenshot({ path: '/tmp/pw/7-verified.png' });
-            console.log('Verification complete!');
-
-            await browser.close();
-          })();
+          asyncio.run(main())
           EOF
 
       - name: Upload screenshots
@@ -157,4 +87,4 @@ jobs:
         if: always()
         with:
           name: screenshots
-          path: /tmp/pw/*.png
+          path: "*.png"
