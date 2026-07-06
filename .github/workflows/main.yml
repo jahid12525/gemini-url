@@ -1,0 +1,151 @@
+name: VanceAI Signup Flow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  signup-flow:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb fluxbox
+          npm install -g playwright
+          npx playwright install chromium
+          npx playwright install-deps chromium
+
+      - name: Start virtual display (non-headless)
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+          sleep 2
+          fluxbox &
+          sleep 1
+
+      - name: Run Playwright script
+        env:
+          DISPLAY: :99
+        run: |
+          node - <<'EOF'
+          const { chromium } = require('playwright');
+
+          const BASE = 'https://api.edu-mails.com/api';
+
+          async function apiGet(url) {
+            const r = await fetch(url);
+            return r.json();
+          }
+          async function apiPost(url, body) {
+            const r = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
+            return r.json();
+          }
+
+          function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+          (async () => {
+            // ── 1. Get a domain ──────────────────────────────────────────
+            console.log('Fetching domains...');
+            const domainsRes = await apiGet(`${BASE}/domains`);
+            const domain = domainsRes.data.domains[0];
+            console.log(`Using domain: ${domain.name} (id=${domain.id})`);
+
+            // ── 2. Generate random email ──────────────────────────────────
+            console.log('Generating email...');
+            const genRes = await apiPost(`${BASE}/emails/generate`, { action: 'random' });
+            const { uuid, address } = genRes.data.email;
+            console.log(`Email: ${address}  UUID: ${uuid}`);
+
+            // ── 3. Launch browser ─────────────────────────────────────────
+            const browser = await chromium.launch({
+              headless: false,
+              args: ['--no-sandbox', '--disable-setuid-sandbox', '--display=:99']
+            });
+            const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+            const page = await context.newPage();
+
+            // ── 4. Navigate to VanceAI ────────────────────────────────────
+            console.log('Navigating to VanceAI...');
+            await page.goto('https://vanceai.com/', { waitUntil: 'networkidle' });
+
+            // ── 5. Click Log in ───────────────────────────────────────────
+            console.log('Clicking Log in...');
+            await page.locator('button:has-text("Log in")').first().click();
+
+            // ── 6. Wait for modal → click Sign up ─────────────────────────
+            const modal = page.locator('[role="dialog"][data-state="open"]');
+            await modal.waitFor({ state: 'visible', timeout: 10000 });
+            await page.screenshot({ path: '1-modal-signin.png' });
+
+            console.log('Clicking Sign up...');
+            await modal.locator('button:has-text("Sign up")').click();
+            await modal.locator('h2:has-text("Sign up")').waitFor({ state: 'visible', timeout: 5000 });
+            await page.screenshot({ path: '2-modal-signup.png' });
+
+            // ── 7. Fill email & submit ────────────────────────────────────
+            console.log(`Filling email: ${address}`);
+            await modal.locator('input#signup-email').fill(address);
+            await page.screenshot({ path: '3-email-filled.png' });
+
+            console.log('Submitting signup form...');
+            await modal.locator('button[type="submit"]:has-text("Send sign up link")').click();
+            await page.screenshot({ path: '4-after-submit.png' });
+
+            // ── 8. Poll inbox for verification email ──────────────────────
+            console.log('Polling inbox for verification email...');
+            let verifyUrl = null;
+            for (let i = 0; i < 24; i++) {
+              await sleep(5000);
+              console.log(`  Poll attempt ${i + 1}...`);
+              const inbox = await apiGet(`${BASE}/emails/${uuid}`);
+              const messages = inbox.data.messages || [];
+              for (const msg of messages) {
+                // Extract first https link from text body
+                const match = (msg.text_body || msg.html_body || '').match(/https?:\/\/[^\s"<>]+/);
+                if (match && match[0].includes('vanceai')) {
+                  verifyUrl = match[0];
+                  console.log(`Found verification URL: ${verifyUrl}`);
+                  break;
+                }
+              }
+              if (verifyUrl) break;
+            }
+
+            if (!verifyUrl) {
+              console.error('No verification email received within timeout.');
+              await page.screenshot({ path: '5-timeout.png' });
+              await browser.close();
+              process.exit(1);
+            }
+
+            // ── 9. Open verification link in same tab ─────────────────────
+            console.log('Opening verification link in same tab...');
+            await page.goto(verifyUrl, { waitUntil: 'networkidle', timeout: 30000 });
+            await sleep(2000);
+            await page.screenshot({ path: '5-verified.png' });
+            console.log('Verification complete!');
+
+            await browser.close();
+          })();
+          EOF
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: |
+            1-modal-signin.png
+            2-modal-signup.png
+            3-email-filled.png
+            4-after-submit.png
+            5-verified.png
+            5-timeout.png
