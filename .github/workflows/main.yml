@@ -78,31 +78,43 @@ jobs:
             // ── 4. Navigate to VanceAI ────────────────────────────────────
             console.log('Navigating to VanceAI...');
             await page.goto('https://vanceai.com/', { waitUntil: 'networkidle' });
+            await page.screenshot({ path: '/tmp/pw/0-loaded.png' });
 
-            // ── 5. Click Log in ───────────────────────────────────────────
-            console.log('Clicking Log in...');
+            // ── 5. Click "Log in" nav button (opens dropdown) ─────────────
+            console.log('Clicking Log in nav button...');
             await page.locator('button:has-text("Log in")').first().click();
+            await sleep(1000);
+            await page.screenshot({ path: '/tmp/pw/1-dropdown.png' });
 
-            // ── 6. Wait for modal → click Sign up ─────────────────────────
+            // ── 6. Click "Sign in" button inside the dropdown ─────────────
+            // The dropdown contains a "Sign in" button that opens the modal
+            console.log('Clicking Sign in inside dropdown...');
+            await page.locator('button:has-text("Sign in")').first().click();
+            await sleep(1000);
+            await page.screenshot({ path: '/tmp/pw/2-after-signin-click.png' });
+
+            // ── 7. Wait for modal ─────────────────────────────────────────
+            console.log('Waiting for modal...');
             const modal = page.locator('[role="dialog"][data-state="open"]');
             await modal.waitFor({ state: 'visible', timeout: 10000 });
-            await page.screenshot({ path: '/tmp/pw/1-modal-signin.png' });
+            await page.screenshot({ path: '/tmp/pw/3-modal-signin.png' });
 
+            // ── 8. Click "Sign up" inside modal ───────────────────────────
             console.log('Clicking Sign up...');
             await modal.locator('button:has-text("Sign up")').click();
             await modal.locator('h2:has-text("Sign up")').waitFor({ state: 'visible', timeout: 5000 });
-            await page.screenshot({ path: '/tmp/pw/2-modal-signup.png' });
+            await page.screenshot({ path: '/tmp/pw/4-modal-signup.png' });
 
-            // ── 7. Fill email & submit ────────────────────────────────────
+            // ── 9. Fill email & submit ────────────────────────────────────
             console.log(`Filling email: ${address}`);
             await modal.locator('input#signup-email').fill(address);
-            await page.screenshot({ path: '/tmp/pw/3-email-filled.png' });
+            await page.screenshot({ path: '/tmp/pw/5-email-filled.png' });
 
             console.log('Submitting signup form...');
             await modal.locator('button[type="submit"]:has-text("Send sign up link")').click();
-            await page.screenshot({ path: '/tmp/pw/4-after-submit.png' });
+            await page.screenshot({ path: '/tmp/pw/6-after-submit.png' });
 
-            // ── 8. Poll inbox for verification email ──────────────────────
+            // ── 10. Poll inbox for verification email ─────────────────────
             console.log('Polling inbox for verification email...');
             let verifyUrl = null;
             for (let i = 0; i < 24; i++) {
@@ -111,9 +123,10 @@ jobs:
               const inbox = await apiGet(`${BASE}/emails/${uuid}`);
               const messages = inbox.data.messages || [];
               for (const msg of messages) {
-                const match = (msg.text_body || msg.html_body || '').match(/https?:\/\/[^\s"<>]+/);
-                if (match && match[0].includes('vanceai')) {
-                  verifyUrl = match[0];
+                const body = msg.text_body || msg.html_body || '';
+                const match = body.match(/https?:\/\/[^\s"<>]+vanceai[^\s"<>]*/);
+                if (match) {
+                  verifyUrl = match[0].replace(/&amp;/g, '&');
                   console.log(`Found verification URL: ${verifyUrl}`);
                   break;
                 }
@@ -123,16 +136,16 @@ jobs:
 
             if (!verifyUrl) {
               console.error('No verification email received within timeout.');
-              await page.screenshot({ path: '/tmp/pw/5-timeout.png' });
+              await page.screenshot({ path: '/tmp/pw/7-timeout.png' });
               await browser.close();
               process.exit(1);
             }
 
-            // ── 9. Open verification link in same tab ─────────────────────
+            // ── 11. Open verification link in same tab ────────────────────
             console.log('Opening verification link in same tab...');
             await page.goto(verifyUrl, { waitUntil: 'networkidle', timeout: 30000 });
             await sleep(2000);
-            await page.screenshot({ path: '/tmp/pw/5-verified.png' });
+            await page.screenshot({ path: '/tmp/pw/7-verified.png' });
             console.log('Verification complete!');
 
             await browser.close();
