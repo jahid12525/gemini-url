@@ -1,148 +1,117 @@
-const https = require('https');
+// scripts/edu-mails.js
+// EduMails API integration (https://api.edu-mails.com/api)
 
-const BASE_URL = 'https://api.edu-mails.com';
+const BASE_URL = 'https://api.edu-mails.com/api';
 
 /**
- * Generates a temporary email address via EduMails API
- * @param {Object} options
- * @param {string} options.action - 'random' or 'custom'
- * @param {string} [options.username] - required if action is 'custom'
- * @param {string} [options.domain] - required if action is 'custom'
- * @returns {Promise<{address: string, uuid: string}>}
+ * Safely parse JSON response with detailed error logging
  */
-function generateEmail(options = { action: 'random' }) {
-    return new Promise((resolve, reject) => {
-        const postData = JSON.stringify(options);
-
-        const req = https.request(
-            `${BASE_URL}/generate`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(postData),
-                },
-            },
-            (res) => {
-                let data = '';
-                res.on('data', (chunk) => (data += chunk));
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        if (!json.success) {
-                            reject(new Error(json.message || 'Failed to generate email'));
-                            return;
-                        }
-                        resolve({
-                            address: json.email,
-                            uuid: json.uuid,
-                        });
-                    } catch (err) {
-                        reject(new Error(`Invalid JSON response: ${data}`));
-                    }
-                });
-            }
-        );
-
-        req.on('error', reject);
-        req.write(postData);
-        req.end();
-    });
+async function safeJson(res, context) {
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch (err) {
+    console.error(`[edu-mails] Non-JSON response during ${context}. HTTP status: ${res.status}`);
+    console.error('[edu-mails] First 500 chars of body:', text.slice(0, 500));
+    throw new Error(`EduMails API returned non-JSON (status ${res.status}) during ${context}. Endpoint may be down or changed.`);
+  }
+  if (!res.ok || json.status !== 'success') {
+    throw new Error(`EduMails API error during ${context}: ${JSON.stringify(json)}`);
+  }
+  return json;
 }
 
 /**
- * Fetches messages for a given email UUID
- * @param {string} uuid
- * @returns {Promise<Array>}
+ * Fetch all active educational domains.
+ * @returns {Promise<Array<{id:number,name:string,tld:string}>>}
  */
-function getMessages(uuid) {
-    return new Promise((resolve, reject) => {
-        https
-            .get(`${BASE_URL}/messages/${uuid}`, (res) => {
-                let data = '';
-                res.on('data', (chunk) => (data += chunk));
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        if (!json.success) {
-                            reject(new Error(json.message || 'Failed to fetch messages'));
-                            return;
-                        }
-                        resolve(json.messages || []);
-                    } catch (err) {
-                        reject(new Error(`Invalid JSON response: ${data}`));
-                    }
-                });
-            })
-            .on('error', reject);
-    });
+async function getDomains() {
+  const res = await fetch(`${BASE_URL}/domains`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' }
+  });
+  const json = await safeJson(res, 'getDomains');
+  return json.data.domains;
 }
 
 /**
- * Polls inbox until a message arrives or timeout
- * @param {string} uuid
- * @param {Object} options
- * @param {number} [options.timeoutMs=60000]
- * @param {number} [options.intervalMs=3000]
- * @returns {Promise<Array>}
+ * Generate a new temporary email address.
+ * @param {Object} opts
+ * @param {'random'|'custom'} [opts.action='random']
+ * @param {string} [opts.alias]     - required if action === 'custom'
+ * @param {number} [opts.domainId]  - required if action === 'custom'
+ * @returns {Promise<{uuid:string,address:string,created_at:string}>}
  */
-async function waitForMessage(uuid, options = {}) {
-    const { timeoutMs = 60000, intervalMs = 3000 } = options;
-    const startTime = Date.now();
+async function generateEmail(opts = {}) {
+  const action = opts.action || 'random';
+  const body = { action };
 
-    while (Date.now() - startTime < timeoutMs) {
-        const messages = await getMessages(uuid);
-        if (messages.length > 0) {
-            return messages;
-        }
-        console.log(`No messages yet, waiting ${intervalMs}ms...`);
-        await sleep(intervalMs);
+  if (action === 'custom') {
+    if (!opts.alias || !opts.domainId) {
+      throw new Error('custom action requires alias and domainId');
     }
+    body.alias = opts.alias;
+    body.domain_id = opts.domainId;
+  }
 
-    throw new Error(`Timeout: No messages received within ${timeoutMs}ms`);
+  const res = await fetch(`${BASE_URL}/emails/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  const json = await safeJson(res, 'generateEmail');
+  return json.data.email; // { uuid, address, created_at }
 }
 
 /**
- * Extracts verification link and/or code from email
- * @param {Object} message
- * @returns {{link: string|null, code: string|null}}
+ * Fetch inbox messages for a given email UUID.
+ * @param {string} uuid
+ * @returns {Promise<{email:Object, messages:Array}>}
  */
-function extractVerification(message) {
-    const html = message.html || message.body || '';
-    const text = message.text || message.body || '';
-
-    // Look for common verification link patterns
-    const linkPatterns = [
-        /href=["'](https?:\/\/[^"']+(?:verify|confirm|activate|verification)[^"']*)["']/i,
-        /(https?:\/\/[^\s]+(?:verify|confirm|activate|verification)[^\s]*)/i,
-        /href=["'](https?:\/\/[^"']+)["']/gi,
-    ];
-
-    let link = null;
-    for (const pattern of linkPatterns) {
-        const match = html.match(pattern) || text.match(pattern);
-        if (match) {
-            link = match[1] || match[0];
-            // Clean up href="..." wrapper if present
-            link = link.replace(/^href=["']|["']$/g, '');
-            break;
-        }
-    }
-
-    // Look for 6-digit verification code
-    const codeMatch = text.match(/\b\d{6}\b/) || html.match(/\b\d{6}\b/);
-    const code = codeMatch ? codeMatch[0] : null;
-
-    return { link, code };
+async function getInbox(uuid) {
+  const res = await fetch(`${BASE_URL}/emails/${uuid}`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' }
+  });
+  const json = await safeJson(res, 'getInbox');
+  return json.data; // { email, messages }
 }
 
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Poll the inbox until at least one message arrives (or timeout).
+ * @param {string} uuid
+ * @param {Object} [opts]
+ * @param {number} [opts.timeoutMs=90000]
+ * @param {number} [opts.intervalMs=3000]
+ * @param {(msg:Object)=>boolean} [opts.filter] - optional predicate to match a specific message
+ * @returns {Promise<Object>} the matched message
+ */
+async function pollForMessage(uuid, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 90000;
+  const intervalMs = opts.intervalMs ?? 3000;
+  const filter = opts.filter ?? (() => true);
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const { messages } = await getInbox(uuid);
+    const match = (messages || []).find(filter);
+    if (match) return match;
+
+    console.log(`[edu-mails] No matching message yet, waiting ${intervalMs}ms... (${Math.round((Date.now() - start) / 1000)}s elapsed)`);
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for email to arrive (uuid: ${uuid})`);
 }
 
 module.exports = {
-    generateEmail,
-    getMessages,
-    waitForMessage,
-    extractVerification,
+  getDomains,
+  generateEmail,
+  getInbox,
+  pollForMessage
 };
