@@ -1,8 +1,13 @@
 {
-    "name": "vanceai-signup-flow",
-    "version": "1.0.0",
-    "private": true,
-    "dependencies": {
-        "playwright": "^1.47.0"
-    }
+  "name": "vanceai-login-github-action",
+  "version": "1.0.0",
+  "description": "Playwright script to open VanceAI and click log in on a GitHub Action (non-headless)",
+  "main": "login.js",
+  "scripts": {
+    "start": "node login.js"
+  },
+  "dependencies": {
+    "playwright": "^1.45.0",
+    "adm-zip": "^0.5.12"
+  }
 }
