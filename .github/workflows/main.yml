@@ -15,7 +15,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb fluxbox
-          npm install -g playwright
+          mkdir -p /tmp/pw && cd /tmp/pw
+          npm init -y
+          npm install playwright
           npx playwright install chromium
           npx playwright install-deps chromium
 
@@ -31,6 +33,7 @@ jobs:
         env:
           DISPLAY: :99
         run: |
+          cd /tmp/pw
           node - <<'EOF'
           const { chromium } = require('playwright');
 
@@ -83,21 +86,21 @@ jobs:
             // ── 6. Wait for modal → click Sign up ─────────────────────────
             const modal = page.locator('[role="dialog"][data-state="open"]');
             await modal.waitFor({ state: 'visible', timeout: 10000 });
-            await page.screenshot({ path: '1-modal-signin.png' });
+            await page.screenshot({ path: '/tmp/pw/1-modal-signin.png' });
 
             console.log('Clicking Sign up...');
             await modal.locator('button:has-text("Sign up")').click();
             await modal.locator('h2:has-text("Sign up")').waitFor({ state: 'visible', timeout: 5000 });
-            await page.screenshot({ path: '2-modal-signup.png' });
+            await page.screenshot({ path: '/tmp/pw/2-modal-signup.png' });
 
             // ── 7. Fill email & submit ────────────────────────────────────
             console.log(`Filling email: ${address}`);
             await modal.locator('input#signup-email').fill(address);
-            await page.screenshot({ path: '3-email-filled.png' });
+            await page.screenshot({ path: '/tmp/pw/3-email-filled.png' });
 
             console.log('Submitting signup form...');
             await modal.locator('button[type="submit"]:has-text("Send sign up link")').click();
-            await page.screenshot({ path: '4-after-submit.png' });
+            await page.screenshot({ path: '/tmp/pw/4-after-submit.png' });
 
             // ── 8. Poll inbox for verification email ──────────────────────
             console.log('Polling inbox for verification email...');
@@ -108,7 +111,6 @@ jobs:
               const inbox = await apiGet(`${BASE}/emails/${uuid}`);
               const messages = inbox.data.messages || [];
               for (const msg of messages) {
-                // Extract first https link from text body
                 const match = (msg.text_body || msg.html_body || '').match(/https?:\/\/[^\s"<>]+/);
                 if (match && match[0].includes('vanceai')) {
                   verifyUrl = match[0];
@@ -121,7 +123,7 @@ jobs:
 
             if (!verifyUrl) {
               console.error('No verification email received within timeout.');
-              await page.screenshot({ path: '5-timeout.png' });
+              await page.screenshot({ path: '/tmp/pw/5-timeout.png' });
               await browser.close();
               process.exit(1);
             }
@@ -130,7 +132,7 @@ jobs:
             console.log('Opening verification link in same tab...');
             await page.goto(verifyUrl, { waitUntil: 'networkidle', timeout: 30000 });
             await sleep(2000);
-            await page.screenshot({ path: '5-verified.png' });
+            await page.screenshot({ path: '/tmp/pw/5-verified.png' });
             console.log('Verification complete!');
 
             await browser.close();
@@ -142,10 +144,4 @@ jobs:
         if: always()
         with:
           name: screenshots
-          path: |
-            1-modal-signin.png
-            2-modal-signup.png
-            3-email-filled.png
-            4-after-submit.png
-            5-verified.png
-            5-timeout.png
+          path: /tmp/pw/*.png
