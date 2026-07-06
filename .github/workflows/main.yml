@@ -44,11 +44,9 @@ jobs:
         ZIP_URL: ${{ github.event.inputs.zip_url }}
       run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" node login.js
 
-    - name: Upload screenshots and upscaled images as workflow artifacts
+    - name: Upload upscaled images as workflow artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: playwright-artifacts
-        path: |
-          output.zip
-          *.png
+        path: output.zip
