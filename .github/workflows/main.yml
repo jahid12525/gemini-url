@@ -1,108 +1,38 @@
-name: VanceAI Login Flow
+name: VanceAI Signup Flow
 
 on:
-  workflow_dispatch:
-
+  workflow_dispatch: {}
+  
 jobs:
-  click-signup:
+  run-signup:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb fluxbox
-          pip3 install playwright --break-system-packages
-          python3 -m playwright install chromium
-          python3 -m playwright install-deps chromium
+        run: npm install
 
-      - name: Run automation
-        env:
-          DISPLAY: :99
-        run: |
-          Xvfb :99 -screen 0 1280x900x24 &
-          sleep 2
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
 
-          python3 << 'EOF'
-          import asyncio
-          from playwright.async_api import async_playwright
+      - name: Install xvfb (for headed browser mode)
+        run: sudo apt-get update && sudo apt-get install -y xvfb
 
-          async def main():
-              async with async_playwright() as p:
-                  browser = await p.chromium.launch(
-                      headless=False,
-                      args=["--display=:99", "--no-sandbox", "--disable-dev-shm-usage"]
-                  )
-                  page = await browser.new_page(viewport={"width": 1280, "height": 900})
-
-                  # ── Step 1: Open site ──────────────────────────────────────
-                  print("Step 1: Opening vanceai.com...")
-                  await page.goto("https://vanceai.com/", wait_until="networkidle")
-                  await page.wait_for_timeout(2000)
-                  await page.screenshot(path="01_homepage.png")
-
-                  # ── Step 2: Click Log in (desktop or mobile) ───────────────
-                  viewport_width = await page.evaluate("window.innerWidth")
-                  print(f"Step 2: Viewport={viewport_width}px — clicking Log in...")
-
-                  if viewport_width >= 768:
-                      # Desktop nav: the plain text "Log in" button
-                      login_btn = page.locator(
-                          'button.text-sm.font-medium.text-zinc-300',
-                          has_text="Log in"
-                      ).first
-                      await login_btn.wait_for(state="visible", timeout=10000)
-                      await login_btn.click()
-                  else:
-                      # Mobile: open hamburger first
-                      hamburger = page.locator('button[aria-label="Toggle menu"]')
-                      await hamburger.wait_for(state="visible", timeout=10000)
-                      await hamburger.click()
-                      await page.wait_for_timeout(800)
-
-                      login_btn = page.locator(
-                          'button.w-full.rounded-xl',
-                          has_text="Log in"
-                      )
-                      await login_btn.wait_for(state="visible", timeout=10000)
-                      await login_btn.click()
-
-                  # ── Step 3: Wait for Sign in modal ─────────────────────────
-                  print("Step 3: Waiting for Sign in modal...")
-                  modal = page.locator('div[role="dialog"][data-state="open"]')
-                  await modal.wait_for(state="visible", timeout=15000)
-                  await page.wait_for_timeout(1000)
-                  await page.screenshot(path="02_signin_modal.png")
-
-                  # Confirm we're on the Sign in view
-                  signin_heading = modal.locator('h2', has_text="Sign in")
-                  await signin_heading.wait_for(state="visible", timeout=5000)
-                  print("  ✓ Sign in modal open")
-
-                  # ── Step 4: Click "Sign up" link inside the modal ──────────
-                  print("Step 4: Clicking Sign up...")
-                  signup_btn = modal.locator(
-                      'button[type="button"]',
-                      has_text="Sign up"
-                  )
-                  await signup_btn.wait_for(state="visible", timeout=10000)
-                  await signup_btn.click()
-
-                  await page.wait_for_timeout(1500)
-                  await page.screenshot(path="03_signup_view.png")
-                  print("  ✓ Sign up clicked — done!")
-
-                  await browser.close()
-
-          asyncio.run(main())
-          EOF
+      - name: Run signup script
+        run: xvfb-run --auto-servernum npx node scripts/login-click.js
 
       - name: Upload screenshots
-        uses: actions/upload-artifact@v4
         if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: screenshots
-          path: "*.png"
+          path: screenshots/
+          retention-days: 7
